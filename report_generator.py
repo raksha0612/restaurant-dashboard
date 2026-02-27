@@ -2,6 +2,9 @@
 report_generator.py
 ====================
 Generates a rich 6-page Revenue Intelligence Brief PDF using reportlab + matplotlib charts.
+
+Fix vs original: _momentum_page donut chart now uses _slug matching instead of
+exact URL string match (which always failed due to short vs long URL mismatch).
 """
 import io, math, textwrap
 from datetime import datetime
@@ -78,7 +81,7 @@ def generate_pdf_report(res_name, res_data, scores, gaps, momentum_data,
     story.append(PageBreak())
     story += _gap_page(res_name, scores, gaps, benchmarks, rank, total)
     story.append(PageBreak())
-    story += _momentum_page(res_name, res_data, scores, momentum_data, df_rev)
+    story += _momentum_page(res_name, res_data, scores, momentum_data, df_rest, df_rev)
     story.append(PageBreak())
     story += _action_page(res_name, scores, gaps, persona)
 
@@ -143,7 +146,6 @@ def _cover(res_name, res_data, scores, rank, total):
     story.append(Paragraph(f"Frankfurt City  ·  Ranked #{rank} of {total} Establishments  ·  {datetime.now().strftime('%B %Y')}",
         S('CRM', fontSize=11, textColor=HexColor('#475569'), spaceAfter=10*mm)))
 
-    # KPI row on cover
     h = scores['Composite']
     kd = [
         ["HEALTH SCORE","DISTRICT RANK","STAR RATING","RESPONSIVENESS"],
@@ -190,7 +192,6 @@ def _exec_summary(res_name, res_data, scores, gaps, rank, total, persona, benchm
     res_rate  = float(res_data.get('res_rate', 0) or 0)
     health    = scores['Composite']
 
-    # Narrative
     story.append(Paragraph(
         f"This Revenue Intelligence Brief presents a comprehensive digital audit of <b>{res_name}</b>, "
         f"a Frankfurt City dining establishment currently ranked <b>#{rank} of {total}</b> in the Praxiotech "
@@ -203,7 +204,6 @@ def _exec_summary(res_name, res_data, scores, gaps, rank, total, persona, benchm
         STYLES['Body']))
     story.append(Spacer(1, 2*mm))
 
-    # Top finding callout
     top_gap = max(gaps, key=gaps.get) if gaps else 'Responsiveness'
     top_val = gaps.get(top_gap, 0)
     callout = Table([[Paragraph(
@@ -220,7 +220,6 @@ def _exec_summary(res_name, res_data, scores, gaps, rank, total, persona, benchm
     story.append(callout)
     story.append(Spacer(1, 4*mm))
 
-    # ── SCORECARD TABLE ───────────────────────────────────────────────────────────
     story.append(Paragraph("Performance Scorecard", STYLES['H2']))
 
     bench_map = {
@@ -244,13 +243,12 @@ def _exec_summary(res_name, res_data, scores, gaps, rank, total, persona, benchm
         ds  = f"+{dt:.1f}" if dt >= 0 else f"{dt:.1f}"
         dc  = CG if dt >= 0 else CR
         st  = 'STRENGTH' if dt >= 0 else ('OPPORTUNITY' if dt > -15 else 'CRITICAL')
-        sc_str = f"{sc:.1f}" if dim != 'COMPOSITE' else f"{sc:.1f}"
         bold = dim == 'COMPOSITE'
         fn   = 'Helvetica-Bold' if bold else 'Helvetica'
         rows.append([
             Paragraph(f"<b>{dim}</b>" if bold else dim, S('td',fontName=fn,fontSize=9,textColor=CN)),
             Paragraph(wts[i], S('tdC',fontName=fn,fontSize=9,textColor=CSl,alignment=TA_CENTER)),
-            Paragraph(f"<b>{sc_str}</b>", S('tdSc',fontName='Helvetica-Bold',fontSize=11,textColor=CB,alignment=TA_CENTER)),
+            Paragraph(f"<b>{sc:.1f}</b>", S('tdSc',fontName='Helvetica-Bold',fontSize=11,textColor=CB,alignment=TA_CENTER)),
             Paragraph(f"{bv:.0f}", S('tdB',fontSize=9,textColor=CSl,alignment=TA_CENTER)),
             Paragraph(f"<b>{ds}</b>", S('tdD',fontName='Helvetica-Bold',fontSize=9,textColor=dc,alignment=TA_CENTER)),
             Paragraph(f"<b>{st}</b>",  S('tdSt',fontName='Helvetica-Bold',fontSize=8,textColor=white,alignment=TA_CENTER)),
@@ -278,7 +276,6 @@ def _exec_summary(res_name, res_data, scores, gaps, rank, total, persona, benchm
     story.append(sc_table)
     story.append(Spacer(1, 4*mm))
 
-    # Persona snapshot
     story.append(Paragraph("Customer Persona Intelligence", STYLES['H2']))
     p = persona
     pt = Table([
@@ -299,7 +296,7 @@ def _exec_summary(res_name, res_data, scores, gaps, rank, total, persona, benchm
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
-# PAGE 3 – DIMENSION DEEP-DIVE  (with matplotlib bar chart)
+# PAGE 3 – DIMENSION DEEP-DIVE
 # ══════════════════════════════════════════════════════════════════════════════════
 def _dimension_page(res_name, scores, benchmarks):
     story = [Spacer(1, 5*mm)]
@@ -312,7 +309,6 @@ def _dimension_page(res_name, scores, benchmarks):
         STYLES['Body']))
     story.append(Spacer(1, 3*mm))
 
-    # ── Matplotlib grouped bar chart ──────────────────────────────────────────────
     dims     = ['Reputation','Responsiveness','Digital\nPresence','Intelligence','Visibility']
     sc_vals  = [scores['Reputation'], scores['Responsiveness'], scores['Digital Presence'],
                 scores['Intelligence'], scores['Visibility']]
@@ -340,7 +336,6 @@ def _dimension_page(res_name, scores, benchmarks):
     story.append(RLImage(img_buf, width=168*mm, height=68*mm))
     story.append(Spacer(1, 4*mm))
 
-    # ── Per-dimension cards ───────────────────────────────────────────────────────
     dim_details = [
         ('Reputation (30%)',       scores['Reputation'],       benchmarks.get('rating',4.4)*20,
          'Combines star rating quality (70%) and review volume social proof (30%). '
@@ -369,7 +364,6 @@ def _dimension_page(res_name, scores, benchmarks):
         bg  = HexColor('#DCFCE7') if dt >= 0 else (HexColor('#FEF3C7') if dt > -15 else HexColor('#FEE2E2'))
         tc  = CG if dt >= 0 else (CA if dt > -15 else CR)
         st  = 'STRENGTH' if dt >= 0 else ('OPPORTUNITY' if dt > -15 else 'CRITICAL GAP')
-        sign = '+' if dt >= 0 else ''
         card = Table([
             [Paragraph(f"<b>{name}</b>", S('dh',fontName='Helvetica-Bold',fontSize=10,textColor=CN)),
              Paragraph(f"<b>{sc:.1f} / 100</b>", S('dsv',fontName='Helvetica-Bold',fontSize=12,textColor=CB,alignment=TA_RIGHT)),
@@ -396,7 +390,7 @@ def _dimension_page(res_name, scores, benchmarks):
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
-# PAGE 4 – COMPETITIVE GAP ANALYSIS  (with horizontal bar chart)
+# PAGE 4 – COMPETITIVE GAP ANALYSIS
 # ══════════════════════════════════════════════════════════════════════════════════
 def _gap_page(res_name, scores, gaps, benchmarks, rank, total):
     story = [Spacer(1, 5*mm)]
@@ -409,11 +403,9 @@ def _gap_page(res_name, scores, gaps, benchmarks, rank, total):
         STYLES['Body']))
     story.append(Spacer(1, 3*mm))
 
-    # ── Horizontal gap chart ──────────────────────────────────────────────────────
     dims   = ['Reputation','Responsiveness','Digital Presence','Intelligence','Visibility']
     scores_list = [scores[d] for d in dims]
     bench_list  = [benchmarks.get('rating',4.4)*20, 90, 85, 75, 70]
-    tgt_list    = [90, 90, 90, 80, 85]
 
     fig, ax = plt.subplots(figsize=(7.2, 2.8))
     y   = np.arange(len(dims))
@@ -430,7 +422,6 @@ def _gap_page(res_name, scores, gaps, benchmarks, rank, total):
     for bar, sc in zip(bars, scores_list):
         ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2,
                 f"{sc:.0f}", va='center', fontsize=8.5, fontweight='bold', color='#0F172A')
-    # Benchmark line markers
     for i, bv in enumerate(bench_list):
         ax.vlines(bv, i-0.3, i+0.3, colors='#0F172A', linewidth=1.8, zorder=4)
     ax.legend(fontsize=8, framealpha=0.8)
@@ -440,7 +431,6 @@ def _gap_page(res_name, scores, gaps, benchmarks, rank, total):
     story.append(RLImage(img_buf, width=168*mm, height=65*mm))
     story.append(Spacer(1, 4*mm))
 
-    # ── Gap summary table ─────────────────────────────────────────────────────────
     story.append(Paragraph("Gap Analysis Summary & Praxiotech Solutions", STYLES['H2']))
     prx_map = {
         'Reputation':       ('Review Velocity Campaign',    '80 EUR/mo',  '45 days',  '+12-18 pts'),
@@ -486,7 +476,6 @@ def _gap_page(res_name, scores, gaps, benchmarks, rank, total):
     story.append(gt)
     story.append(Spacer(1, 4*mm))
 
-    # Opportunity callout
     big = max(gaps, key=gaps.get) if gaps else 'Responsiveness'
     bv  = gaps.get(big, 0)
     ob  = Table([[Paragraph(
@@ -506,9 +495,13 @@ def _gap_page(res_name, scores, gaps, benchmarks, rank, total):
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
-# PAGE 5 – MOMENTUM & REVIEW INTELLIGENCE  (line chart + donut + quality table)
+# PAGE 5 – MOMENTUM & REVIEW INTELLIGENCE
 # ══════════════════════════════════════════════════════════════════════════════════
-def _momentum_page(res_name, res_data, scores, momentum_data, df_rev):
+def _momentum_page(res_name, res_data, scores, momentum_data, df_rest, df_rev):
+    """
+    FIX: now receives df_rest so the donut chart can use _slug matching
+    instead of the broken exact URL string match.
+    """
     import pandas as pd
     story = [Spacer(1, 5*mm)]
     story.append(Paragraph("04 / Momentum & Review Intelligence", STYLES['H1']))
@@ -520,7 +513,6 @@ def _momentum_page(res_name, res_data, scores, momentum_data, df_rev):
         STYLES['Body']))
     story.append(Spacer(1, 3*mm))
 
-    # Prepare data
     if momentum_data is not None and len(momentum_data) > 0:
         months = [str(m)[:7] for m in momentum_data['month']]
         counts = [float(c) for c in momentum_data['count']]
@@ -534,10 +526,8 @@ def _momentum_page(res_name, res_data, scores, momentum_data, df_rev):
     trend_str = "ACCELERATING" if recent3 > avg_vel * 1.1 else ("DECLINING" if recent3 < avg_vel * 0.8 else "STABLE")
     trend_clr = '#22C55E' if trend_str == "ACCELERATING" else ('#EF4444' if trend_str == 'DECLINING' else '#F59E0B')
 
-    # ── Two-panel figure: line chart + donut ──────────────────────────────────────
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.2, 2.8), gridspec_kw={'width_ratios':[3,1.2]})
 
-    # Line chart
     x = range(len(counts))
     ax1.fill_between(x, counts, alpha=0.12, color='#0EA5E9')
     ax1.plot(x, counts, color='#0EA5E9', linewidth=2.2, zorder=3)
@@ -549,22 +539,20 @@ def _momentum_page(res_name, res_data, scores, momentum_data, df_rev):
     ax1.set_xticks(list(range(0, len(months), step)))
     ax1.set_xticklabels([months[i][-5:] for i in range(0, len(months), step)], fontsize=7.5)
     ax1.set_ylabel('Reviews/Month', fontsize=8); ax1.set_title('Review Velocity (13-Month)', fontsize=9, pad=4)
-    # Trend annotation
     ax1.axhline(avg_vel, color='#64748B', linewidth=1, linestyle='--', alpha=0.7)
     ax1.text(len(counts)-1, avg_vel+0.2, f"Avg:{avg_vel:.1f}", fontsize=7, color='#64748B', ha='right')
 
-    # Donut – rating distribution
-    rating_col = None
-    from data_audit import find_col
-    url_col = find_col(df_rev, ['page_url','url','link'])
-    r_url_val = str(res_data.get('Page_URL', res_data.get('page_url','')))
-    if url_col:
-        sub = df_rev[df_rev[url_col].astype(str) == r_url_val]
-        if len(sub) > 0 and 'review_rating' in df_rev.columns:
-            rc = sub['review_rating'].value_counts().sort_index(ascending=False)
-        else:
-            rc = pd.Series([40,30,15,10,5], index=[5,4,3,2,1])
-    else:
+    # FIX: use _slug matching for the donut chart
+    rc = None
+    if '_slug' in df_rest.columns and '_slug' in df_rev.columns:
+        try:
+            rest_slug = df_rest[df_rest['name'] == res_name].iloc[0]['_slug']
+            sub = df_rev[df_rev['_slug'] == rest_slug]
+            if len(sub) > 0 and 'review_rating' in df_rev.columns:
+                rc = sub['review_rating'].value_counts().sort_index(ascending=False)
+        except (IndexError, KeyError):
+            pass
+    if rc is None or len(rc) == 0:
         rc = pd.Series([40,30,15,10,5], index=[5,4,3,2,1])
 
     donut_clrs = ['#22C55E','#86EFAC','#FCD34D','#FCA5A5','#EF4444']
@@ -580,7 +568,6 @@ def _momentum_page(res_name, res_data, scores, momentum_data, df_rev):
     story.append(RLImage(img_buf, width=168*mm, height=65*mm))
     story.append(Spacer(1, 3*mm))
 
-    # ── Stats row ─────────────────────────────────────────────────────────────────
     tc_clr = HexColor(trend_clr)
     srow = [
         [Paragraph("AVG VELOCITY", STYLES['KPIL']),
@@ -608,7 +595,6 @@ def _momentum_page(res_name, res_data, scores, momentum_data, df_rev):
     story.append(st)
     story.append(Spacer(1, 4*mm))
 
-    # ── Review quality table ──────────────────────────────────────────────────────
     story.append(Paragraph("Review Quality Matrix", STYLES['H2']))
     rating    = float(res_data.get('rating_n',0) or 0)
     rev_count = int(res_data.get('rev_count_n',0) or 0)
@@ -645,7 +631,7 @@ def _momentum_page(res_name, res_data, scores, momentum_data, df_rev):
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
-# PAGE 6 – ACTION PLAN  (roadmap + investment + radar chart + pitch)
+# PAGE 6 – ACTION PLAN
 # ══════════════════════════════════════════════════════════════════════════════════
 def _action_page(res_name, scores, gaps, persona):
     story = [Spacer(1, 5*mm)]
@@ -657,7 +643,6 @@ def _action_page(res_name, scores, gaps, persona):
         STYLES['Body']))
     story.append(Spacer(1, 2*mm))
 
-    # ── Radar chart ────────────────────────────────────────────────────────────────
     dims   = ['Reputation','Responsiveness','Digital\nPresence','Intelligence','Visibility']
     sc_v   = [scores['Reputation'], scores['Responsiveness'], scores['Digital Presence'],
                scores['Intelligence'], scores['Visibility']]
@@ -679,7 +664,6 @@ def _action_page(res_name, scores, gaps, persona):
     radar_buf = io.BytesIO(); fig.savefig(radar_buf, format='PNG', dpi=140, bbox_inches='tight'); plt.close(fig)
     radar_buf.seek(0)
 
-    # ── 90-day roadmap table ───────────────────────────────────────────────────────
     rdmap = [
         ["Phase","Timeframe","Initiative","Praxiotech Service","Investment","KPI"],
         ["QUICK WIN","Days 1-14","Google Profile Optimization","Profile Audit + Setup","60 EUR/mo","Profile 100%"],
@@ -717,14 +701,12 @@ def _action_page(res_name, scores, gaps, persona):
         ('BOX',(0,0),(-1,-1),0.5,CBd),
     ] + pstyles))
 
-    # Radar + roadmap side by side
     tbl = Table([[RLImage(radar_buf, width=58*mm, height=58*mm), rt]],
                 colWidths=[62*mm, 113*mm])
     tbl.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(1,0),(1,0),5)]))
     story.append(tbl)
     story.append(Spacer(1, 4*mm))
 
-    # ── Investment summary ─────────────────────────────────────────────────────────
     story.append(Paragraph("Investment Summary", STYLES['H2']))
     inv = [
         ["Service Tier","Monthly","Annual","Expected Impact"],
@@ -752,7 +734,6 @@ def _action_page(res_name, scores, gaps, persona):
     story.append(it)
     story.append(Spacer(1, 4*mm))
 
-    # ── Pitch scripts ──────────────────────────────────────────────────────────────
     story.append(Paragraph("Sales Pitch Scripts", STYLES['H2']))
     p = persona
 
@@ -775,7 +756,6 @@ def _action_page(res_name, scores, gaps, persona):
         story.append(pt)
         story.append(Spacer(1, 3*mm))
 
-    # Disclaimer
     story.append(HRFlowable(width='100%', thickness=0.5, color=CBd, spaceAfter=2*mm))
     story.append(Paragraph(
         f"Disclaimer: This brief is for internal Praxiotech sales use only. Benchmarks derived from public "
